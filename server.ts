@@ -54,14 +54,20 @@ const setupWizard = new Scenes.WizardScene<MyContext>(
     await ctx.reply(`🔍 Validating username: \`${username}\`...`, { parse_mode: 'Markdown' });
 
     try {
-      await axios.get(text, { timeout: 5000 });
+      await axios.get(text, { timeout: 8000 });
       ctx.session.nglLink = text;
       await ctx.reply('✅ Link validated! Now, do you want to use a **Custom Message** or **Random Humor List**?', 
         Markup.keyboard([['Custom Message', 'Random Humor']]).oneTime().resize()
       );
       return ctx.wizard.next();
-    } catch (error) {
-      return ctx.reply('❌ Could not validate NGL link. The username might not exist.');
+    } catch (error: any) {
+      let msg = '❌ Could not validate NGL link. Please check the URL or try again later.';
+      if (error.response) {
+        msg = `❌ Link validation failed (Code: ${error.response.status}). The username might not exist, or the profile is blocked.`;
+      } else if (error.code === 'ECONNABORTED') {
+        msg = '❌ Connection timed out. Please try again.';
+      }
+      return ctx.reply(msg);
     }
   },
   async (ctx) => {
@@ -180,41 +186,57 @@ bot.command('run', async (ctx) => {
     const s = (uptimeSeconds % 60).toString().padStart(2, '0');
     
     const statusText = 
-      `🛰 *NGL EXPLORER TERMINAL v1.5.0*\n` +
-      `━━━━━━━━━━━━━━━━━━━━━\n` +
-      `🎯 *TARGET:* \`${username}\`\n` +
-      `🚀 *UPTIME:* \`${h}:${m}:${s}\`\n` +
-      `📊 *SENT:* \`${ctx.session.count}\` messages\n` +
-      `🛡 *STATUS:* \`ACTIVE 🟢\`\n` +
-      `━━━━━━━━━━━━━━━━━━━━━\n` +
-      `🧾 *LOG:* \`${ctx.session.lastLog}\`\n` +
-      `📍 *SERVER:* \`Production (Railway-Env)\``;
+      `*🛰 NGL EXPLORER TERMINAL v1.6.0*\n` +
+      `─────────────────────────────\n` +
+      `👤 *Target:* \`${username}\`\n` +
+      `⏱ *Uptime:* \`${h}:${m}:${s}\`\n` +
+      `📊 *Sent:* \`${ctx.session.count}\` messages 📨\n` +
+      `🛡 *Status:* \`RUNNING 🟢\`\n` +
+      `─────────────────────────────\n` +
+      `📝 *Last Msg:* \`"${ctx.session.lastLog}"\``;
 
     if (ctx.session.statusMessageId) {
       ctx.telegram.editMessageText(ctx.chat.id, ctx.session.statusMessageId, undefined, statusText, { parse_mode: 'Markdown' }).catch(() => {});
     }
 
-    const params = new URLSearchParams();
-    params.append('username', username || '');
-    params.append('question', currentMsg || '');
-    params.append('deviceId', deviceId);
-    params.append('gameSlug', '');
-    params.append('referrer', '');
+    // Helper for sending
+    const sendNgl = async () => {
+        try {
+            const params = new URLSearchParams();
+            params.append('username', username || '');
+            params.append('question', currentMsg || '');
+            params.append('deviceId', deviceId);
+            params.append('gameSlug', '');
+            params.append('referrer', '');
 
-    axios.post('https://ngl.link/api/submit', params, {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'Accept': 'application/json, text/javascript, */*; q=0.01',
-        'X-Requested-With': 'XMLHttpRequest',
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
-        'Referer': `https://ngl.link/${username}`,
-        'Origin': 'https://ngl.link'
-      }
-    }).then(response => {
-      console.log(`✅ Message Sent to ${username}: ${response.status}`);
-    }).catch(err => {
-      console.error(`❌ Failed for ${username}: ${err.response?.data?.error || err.message}`);
-    });
+            const res = await axios.post(`https://ngl.link/${username}`, params, {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
+                    'Referer': `https://ngl.link/${username}`,
+                    'Origin': 'https://ngl.link'
+                }
+            });
+            console.log(`✅ Message Sent to ${username}: ${res.status}`);
+        } catch (err: any) {
+            let errorMsg = 'Unknown error';
+            if (err.response) {
+                switch (err.response.status) {
+                    case 404: errorMsg = 'Profile not found (404)'; break;
+                    case 429: errorMsg = 'Rate limited (429 - slow down)'; break;
+                    case 500: case 502: case 503: errorMsg = 'NGL server error'; break;
+                    default: errorMsg = `HTTP Error ${err.response.status}`;
+                }
+            } else if (err.code === 'ECONNABORTED') {
+                errorMsg = 'Request timed out';
+            }
+            
+            console.error(`❌ Failed for ${username}: ${err.response?.status} - ${errorMsg}`);
+            ctx.session.lastLog = `❌ ${errorMsg}`;
+        }
+    };
+    sendNgl();
   }, 3000);
 
   activeIntervals.set(ctx.from!.id, interval);
@@ -241,15 +263,14 @@ bot.command('stop', async (ctx) => {
       const s = (uptimeSeconds % 60).toString().padStart(2, '0');
       
       const stoppedStatus = 
-        `🛰 *NGL EXPLORER TERMINAL v1.5.0*\n` +
-        `━━━━━━━━━━━━━━━━━━━━━\n` +
-        `🎯 *TARGET:* \`${username}\`\n` +
-        `🚀 *UPTIME:* \`${h}:${m}:${s}\` (Final)\n` +
-        `📊 *SENT:* \`${ctx.session.count}\` messages\n` +
-        `🛡 *STATUS:* \`OFFLINE 🔴\`\n` +
-        `━━━━━━━━━━━━━━━━━━━━━\n` +
-        `🧾 *LOG:* \`Session Terminated by User\`\n` +
-        `📍 *SERVER:* \`Production (Railway-Env)\``;
+        `*🛰 NGL EXPLORER TERMINAL v1.6.0*\n` +
+        `─────────────────────────────\n` +
+        `👤 *Target:* \`${username}\`\n` +
+        `⏱ *Uptime:* \`${h}:${m}:${s}\` (Final)\n` +
+        `📊 *Sent:* \`${ctx.session.count}\` messages 📨\n` +
+        `🛡 *Status:* \`OFFLINE 🔴\`\n` +
+        `─────────────────────────────\n` +
+        `📝 *Result:* \`Session Terminated by User\``;
       
       ctx.telegram.editMessageText(ctx.chat.id, ctx.session.statusMessageId, undefined, stoppedStatus, { parse_mode: 'Markdown' }).catch(() => {});
     }
