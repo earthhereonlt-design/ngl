@@ -1,6 +1,7 @@
 import express from 'express';
 import { Telegraf, Scenes, session, Context, Markup } from 'telegraf';
 import axios from 'axios';
+import { v4 as uuidv4 } from 'uuid';
 import 'dotenv/config';
 import { humorMessages } from './messages.ts';
 
@@ -153,11 +154,31 @@ bot.command('run', (ctx) => {
       messageToSend = humorMessages[randomIndex];
     }
 
+    const username = ctx.session.nglLink?.split('/').filter(Boolean).pop();
+    const deviceId = uuidv4();
+
     console.log(`[TEST] ${ctx.from?.id} -> ${ctx.session.nglLink} | MSG: "${messageToSend}" (Count: ${ctx.session.count})`);
     
-    // In a real security test environment, you would hit the NGL API here.
-    // Example:
-    // axios.post('https://ngl.link/api/submit', { username: '...', question: messageToSend, ... })
+    // Actual submission logic
+    const params = new URLSearchParams();
+    params.append('username', username || '');
+    params.append('question', messageToSend || '');
+    params.append('deviceId', deviceId);
+    params.append('gameSlug', '');
+    params.append('referrer', '');
+
+    axios.post('https://ngl.link/api/submit', params, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'X-Requested-With': 'XMLHttpRequest',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      }
+    }).then(response => {
+      console.log(`✅ Success for ${username}: ${response.status}`);
+    }).catch(err => {
+      console.error(`❌ Error for ${username}: ${err.message}`);
+    });
   }, 3000);
 
   activeIntervals.set(ctx.from!.id, interval);
@@ -210,6 +231,10 @@ bot.help((ctx) => {
 
 // --- SERVER SETUP ---
 app.use(express.json());
+
+app.get('/', (req, res) => {
+  res.send('<h1>🤖 Telegram Bot is Running</h1><p>Status: OK</p>');
+});
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', botActive: !!token, runningTests: activeIntervals.size });
