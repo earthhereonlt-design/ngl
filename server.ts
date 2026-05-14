@@ -141,11 +141,11 @@ bot.command('run', async (ctx) => {
   ctx.session.count = 0;
   ctx.session.lastLog = 'Initializing...';
 
-  const initialStatus = await ctx.reply('🚀 *Security Test Started*\nPreparing status dashboard...', { parse_mode: 'Markdown' });
-  ctx.session.statusMessageId = initialStatus.message_id;
-
   // Try to delete user's command message for clean UI
   try { ctx.deleteMessage().catch(() => {}); } catch(e) {}
+
+  const initialStatus = await ctx.reply('🛰 *NGL EXPLORER TERMINAL v1.5.0*\nInitializing dashboard...', { parse_mode: 'Markdown' });
+  ctx.session.statusMessageId = initialStatus.message_id;
 
   const interval = setInterval(async () => {
     if (!ctx.session.isRunning) {
@@ -158,20 +158,20 @@ bot.command('run', async (ctx) => {
     const username = ctx.session.nglLink?.split('/').filter(Boolean).pop();
     const deviceId = uuidv4();
 
-    let messageToSend = ctx.session.customMessage;
+    let currentMsg = ctx.session.customMessage;
     if (ctx.session.useRandom) {
       const randomIndex = Math.floor(Math.random() * humorMessages.length);
-      messageToSend = humorMessages[randomIndex];
+      currentMsg = humorMessages[randomIndex];
       
       const prefixes = ["Oye, ", "Bro, ", "Bhai, ", "", "", "Yo, "];
       const suffixes = [" 😂", " 🔥", " ✨", " 😭", "", ""];
       const randomPrefix = prefixes[Math.floor(Math.random() * prefixes.length)];
       const randomSuffix = suffixes[Math.floor(Math.random() * suffixes.length)];
       
-      messageToSend = `${randomPrefix}${messageToSend}${randomSuffix}`;
+      currentMsg = `${randomPrefix}${currentMsg}${randomSuffix}`;
     }
 
-    ctx.session.lastLog = `Sending: "${messageToSend}"`;
+    ctx.session.lastLog = currentMsg || 'Waiting...';
     
     // Update live status message
     const uptimeSeconds = Math.floor((Date.now() - (ctx.session.startTime || Date.now())) / 1000);
@@ -180,12 +180,15 @@ bot.command('run', async (ctx) => {
     const s = (uptimeSeconds % 60).toString().padStart(2, '0');
     
     const statusText = 
-      `🛰 *NGL Live Terminal v1.2.0*\n\n` +
-      `👤 *Target:* \`${username}\`\n` +
-      `⏱ *Uptime:* \`${h}:${m}:${s}\`\n` +
-      `📊 *Total Sent:* \`${ctx.session.count}\`\n` +
-      `📝 *Last Msg:* \`${messageToSend}\`\n` +
-      `🛡 *Status:* \`RUNNING 🟢\``;
+      `🛰 *NGL EXPLORER TERMINAL v1.5.0*\n` +
+      `━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🎯 *TARGET:* \`${username}\`\n` +
+      `🚀 *UPTIME:* \`${h}:${m}:${s}\`\n` +
+      `📊 *SENT:* \`${ctx.session.count}\` messages\n` +
+      `🛡 *STATUS:* \`ACTIVE 🟢\`\n` +
+      `━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🧾 *LOG:* \`${ctx.session.lastLog}\`\n` +
+      `📍 *SERVER:* \`Production (Railway-Env)\``;
 
     if (ctx.session.statusMessageId) {
       ctx.telegram.editMessageText(ctx.chat.id, ctx.session.statusMessageId, undefined, statusText, { parse_mode: 'Markdown' }).catch(() => {});
@@ -193,7 +196,7 @@ bot.command('run', async (ctx) => {
 
     const params = new URLSearchParams();
     params.append('username', username || '');
-    params.append('question', messageToSend || '');
+    params.append('question', currentMsg || '');
     params.append('deviceId', deviceId);
     params.append('gameSlug', '');
     params.append('referrer', '');
@@ -218,15 +221,18 @@ bot.command('run', async (ctx) => {
 });
 
 
-bot.command('stop', (ctx) => {
+bot.command('stop', async (ctx) => {
   const interval = activeIntervals.get(ctx.from!.id);
+  
+  // Try to delete user's command message for clean UI
+  try { ctx.deleteMessage().catch(() => {}); } catch(e) {}
+
   if (interval) {
     clearInterval(interval);
     activeIntervals.delete(ctx.from!.id);
     ctx.session.isRunning = false;
-    ctx.reply('🛑 *Test Stopped*', { parse_mode: 'Markdown' });
 
-    // Update the final status if possible
+    // Update the final status
     if (ctx.session.statusMessageId) {
       const username = ctx.session.nglLink?.split('/').filter(Boolean).pop() || 'Unknown';
       const uptimeSeconds = Math.floor((Date.now() - (ctx.session.startTime || Date.now())) / 1000);
@@ -235,12 +241,15 @@ bot.command('stop', (ctx) => {
       const s = (uptimeSeconds % 60).toString().padStart(2, '0');
       
       const stoppedStatus = 
-        `🛰 *NGL Live Terminal v1.2.0*\n\n` +
-        `👤 *Target:* \`${username}\`\n` +
-        `⏱ *Uptime:* \`${h}:${m}:${s}\` (Final)\n` +
-        `📊 *Total Sent:* \`${ctx.session.count}\`\n` +
-        `📝 *Last Msg:* \`Session Ended\`\n` +
-        `🛡 *Status:* \`STOPPED 🔴\``;
+        `🛰 *NGL EXPLORER TERMINAL v1.5.0*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🎯 *TARGET:* \`${username}\`\n` +
+        `🚀 *UPTIME:* \`${h}:${m}:${s}\` (Final)\n` +
+        `📊 *SENT:* \`${ctx.session.count}\` messages\n` +
+        `🛡 *STATUS:* \`OFFLINE 🔴\`\n` +
+        `━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🧾 *LOG:* \`Session Terminated by User\`\n` +
+        `📍 *SERVER:* \`Production (Railway-Env)\``;
       
       ctx.telegram.editMessageText(ctx.chat.id, ctx.session.statusMessageId, undefined, stoppedStatus, { parse_mode: 'Markdown' }).catch(() => {});
     }
