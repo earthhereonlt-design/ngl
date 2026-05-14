@@ -19,6 +19,8 @@ interface MySession {
   isRunning?: boolean;
   count?: number;
   startTime?: number;
+  statusMessageId?: number;
+  lastLog?: string;
   __scenes?: any; 
 }
 
@@ -125,7 +127,7 @@ bot.use(async (ctx, next) => {
 // --- COMMANDS ---
 bot.start((ctx) => ctx.scene.enter('SETUP_WIZARD'));
 
-bot.command('run', (ctx) => {
+bot.command('run', async (ctx) => {
   if (!ctx.session.nglLink || !ctx.session.customMessage) {
     return ctx.reply('⚠️ Setup not complete. Use /start to begin.');
   }
@@ -137,10 +139,15 @@ bot.command('run', (ctx) => {
   ctx.session.isRunning = true;
   ctx.session.startTime = Date.now();
   ctx.session.count = 0;
+  ctx.session.lastLog = 'Initializing...';
 
-  ctx.reply('🚀 *Security Test Started*', { parse_mode: 'Markdown' });
+  const initialStatus = await ctx.reply('🚀 *Security Test Started*\nPreparing status dashboard...', { parse_mode: 'Markdown' });
+  ctx.session.statusMessageId = initialStatus.message_id;
 
-  const interval = setInterval(() => {
+  // Try to delete user's command message for clean UI
+  try { ctx.deleteMessage().catch(() => {}); } catch(e) {}
+
+  const interval = setInterval(async () => {
     if (!ctx.session.isRunning) {
       clearInterval(interval);
       return;
@@ -148,18 +155,42 @@ bot.command('run', (ctx) => {
     
     ctx.session.count = (ctx.session.count || 0) + 1;
     
+    const username = ctx.session.nglLink?.split('/').filter(Boolean).pop();
+    const deviceId = uuidv4();
+
     let messageToSend = ctx.session.customMessage;
     if (ctx.session.useRandom) {
       const randomIndex = Math.floor(Math.random() * humorMessages.length);
       messageToSend = humorMessages[randomIndex];
+      
+      const prefixes = ["Oye, ", "Bro, ", "Bhai, ", "", "", "Yo, "];
+      const suffixes = [" 😂", " 🔥", " ✨", " 😭", "", ""];
+      const randomPrefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+      const randomSuffix = suffixes[Math.floor(Math.random() * suffixes.length)];
+      
+      messageToSend = `${randomPrefix}${messageToSend}${randomSuffix}`;
     }
 
-    const username = ctx.session.nglLink?.split('/').filter(Boolean).pop();
-    const deviceId = uuidv4();
-
-    console.log(`[TEST] ${ctx.from?.id} -> ${ctx.session.nglLink} | MSG: "${messageToSend}" (Count: ${ctx.session.count})`);
+    ctx.session.lastLog = `Sending: "${messageToSend}"`;
     
-    // Actual submission logic
+    // Update live status message
+    const uptimeSeconds = Math.floor((Date.now() - (ctx.session.startTime || Date.now())) / 1000);
+    const h = Math.floor(uptimeSeconds / 3600).toString().padStart(2, '0');
+    const m = Math.floor((uptimeSeconds % 3600) / 60).toString().padStart(2, '0');
+    const s = (uptimeSeconds % 60).toString().padStart(2, '0');
+    
+    const statusText = 
+      `🛰 *NGL Live Terminal v1.2.0*\n\n` +
+      `👤 *Target:* \`${username}\`\n` +
+      `⏱ *Uptime:* \`${h}:${m}:${s}\`\n` +
+      `📊 *Total Sent:* \`${ctx.session.count}\`\n` +
+      `📝 *Last Msg:* \`${messageToSend}\`\n` +
+      `🛡 *Status:* \`RUNNING 🟢\``;
+
+    if (ctx.session.statusMessageId) {
+      ctx.telegram.editMessageText(ctx.chat.id, ctx.session.statusMessageId, undefined, statusText, { parse_mode: 'Markdown' }).catch(() => {});
+    }
+
     const params = new URLSearchParams();
     params.append('username', username || '');
     params.append('question', messageToSend || '');
@@ -172,12 +203,14 @@ bot.command('run', (ctx) => {
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
         'Accept': 'application/json, text/javascript, */*; q=0.01',
         'X-Requested-With': 'XMLHttpRequest',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
+        'Referer': `https://ngl.link/${username}`,
+        'Origin': 'https://ngl.link'
       }
     }).then(response => {
-      console.log(`✅ Success for ${username}: ${response.status}`);
+      console.log(`✅ Message Sent to ${username}: ${response.status}`);
     }).catch(err => {
-      console.error(`❌ Error for ${username}: ${err.message}`);
+      console.error(`❌ Failed for ${username}: ${err.response?.data?.error || err.message}`);
     });
   }, 3000);
 
@@ -192,6 +225,25 @@ bot.command('stop', (ctx) => {
     activeIntervals.delete(ctx.from!.id);
     ctx.session.isRunning = false;
     ctx.reply('🛑 *Test Stopped*', { parse_mode: 'Markdown' });
+
+    // Update the final status if possible
+    if (ctx.session.statusMessageId) {
+      const username = ctx.session.nglLink?.split('/').filter(Boolean).pop() || 'Unknown';
+      const uptimeSeconds = Math.floor((Date.now() - (ctx.session.startTime || Date.now())) / 1000);
+      const h = Math.floor(uptimeSeconds / 3600).toString().padStart(2, '0');
+      const m = Math.floor((uptimeSeconds % 3600) / 60).toString().padStart(2, '0');
+      const s = (uptimeSeconds % 60).toString().padStart(2, '0');
+      
+      const stoppedStatus = 
+        `🛰 *NGL Live Terminal v1.2.0*\n\n` +
+        `👤 *Target:* \`${username}\`\n` +
+        `⏱ *Uptime:* \`${h}:${m}:${s}\` (Final)\n` +
+        `📊 *Total Sent:* \`${ctx.session.count}\`\n` +
+        `📝 *Last Msg:* \`Session Ended\`\n` +
+        `🛡 *Status:* \`STOPPED 🔴\``;
+      
+      ctx.telegram.editMessageText(ctx.chat.id, ctx.session.statusMessageId, undefined, stoppedStatus, { parse_mode: 'Markdown' }).catch(() => {});
+    }
   } else {
     ctx.reply('Test is not running.');
   }
