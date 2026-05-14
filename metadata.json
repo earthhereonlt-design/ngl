@@ -1,0 +1,6 @@
+{
+  "name": "Telegram Bot Studio",
+  "description": "A powerful Telegram bot backend with webhook support and anti-flood testing capabilities.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
