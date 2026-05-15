@@ -68,10 +68,12 @@ const setupWizard = new Scenes.WizardScene<MyContext>(
       return ctx.wizard.next();
     } catch (error: any) {
       let msg = '❌ Could not validate NGL link. Please check the URL or try again later.';
-      if (error.response) {
+      if (error.response && error.response.status) {
         msg = `❌ Link validation failed (Code: ${error.response.status}). The username might not exist, or the profile is blocked.`;
       } else if (error.code === 'ECONNABORTED') {
         msg = '❌ Connection timed out. Please try again.';
+      } else {
+        msg = '❌ Failed to connect to the NGL link. The site might be down or blocking requests.';
       }
       return ctx.reply(msg);
     }
@@ -118,6 +120,8 @@ async function finishSetup(ctx: MyContext) {
 const stage = new Scenes.Stage<MyContext>([setupWizard]);
 
 async function sendNglMessage(ctx: MyContext, username: string, message: string, deviceId: string) {
+    // Add jitter
+    await new Promise(resolve => setTimeout(resolve, Math.random() * 3000));
     try {
         const params = new URLSearchParams();
         params.append('username', username || '');
@@ -200,8 +204,7 @@ bot.command('run', async (ctx) => {
       return;
     }
     
-    ctx.session.count = (ctx.session.count || 0) + 1;
-    
+    // Initialize data
     const username = ctx.session.nglLink?.split('/').filter(Boolean).pop() || 'Unknown';
     const deviceId = uuidv4();
 
@@ -218,33 +221,44 @@ bot.command('run', async (ctx) => {
       currentMsg = `${randomPrefix}${currentMsg}${randomSuffix}`;
     }
 
-    ctx.session.lastLog = currentMsg || 'Waiting...';
-    
-    // Update live status message
-    const uptimeSeconds = Math.floor((Date.now() - (ctx.session.startTime || Date.now())) / 1000);
-    const h = Math.floor(uptimeSeconds / 3600).toString().padStart(2, '0');
-    const m = Math.floor((uptimeSeconds % 3600) / 60).toString().padStart(2, '0');
-    const s = (uptimeSeconds % 60).toString().padStart(2, '0');
-    
-    const statusText = 
-      `*🛰 NGL EXPLORER TERMINAL v1.6.0*\n` +
-      `─────────────────────────────\n` +
-      `👤 *Target:* \`${username}\`\n` +
-      `⏱ *Uptime:* \`${h}:${m}:${s}\`\n` +
-      `📊 *Sent:* \`${ctx.session.count}\` messages 📨\n` +
-      `🛡 *Status:* \`RUNNING 🟢\`\n` +
-      `─────────────────────────────\n` +
-      `📝 *Last Msg:* \`"${ctx.session.lastLog}"\``;
+    // Update helper
+    const updateDashboard = async () => {
+        const uptimeSeconds = Math.floor((Date.now() - (ctx.session.startTime || Date.now())) / 1000);
+        const h = Math.floor(uptimeSeconds / 3600).toString().padStart(2, '0');
+        const m = Math.floor((uptimeSeconds % 3600) / 60).toString().padStart(2, '0');
+        const s = (uptimeSeconds % 60).toString().padStart(2, '0');
+        
+        const statusText = 
+          `*🛰 NGL EXPLORER TERMINAL v1.6.0*\n` +
+          `─────────────────────────────\n` +
+          `👤 *Target:* \`${username}\`\n` +
+          `⏱ *Uptime:* \`${h}:${m}:${s}\`\n` +
+          `📊 *Sent:* \`${ctx.session.count}\` messages 📨\n` +
+          `🛡 *Status:* \`RUNNING 🟢\`\n` +
+          `─────────────────────────────\n` +
+          `📝 *Log:* \`${ctx.session.lastLog}\``;
 
-    if (ctx.session.statusMessageId) {
-      ctx.telegram.editMessageText(ctx.chat.id, ctx.session.statusMessageId, undefined, statusText, { parse_mode: 'Markdown' }).catch(() => {});
-    }
+        if (ctx.session.statusMessageId) {
+            await ctx.telegram.editMessageText(ctx.chat.id, ctx.session.statusMessageId, undefined, statusText, { parse_mode: 'Markdown' }).catch(() => {});
+        }
+    };
+
+    ctx.session.count = (ctx.session.count || 0) + 1;
+    
+    // Initial preparing state
+    ctx.session.lastLog = `⏳ Preparing: "${currentMsg.substring(0, 20)}..."`;
+    await updateDashboard();
 
     const result = await sendNglMessage(ctx, username, currentMsg || '', deviceId);
+    
+    // Result state
     if (!result.success) {
         ctx.session.lastLog = `❌ ${result.error}`;
+    } else {
+        ctx.session.lastLog = `✅ Sent: "${currentMsg.substring(0, 20)}..."`;
     }
-  }, 3000);
+    await updateDashboard();
+  }, 10000);
 
   activeIntervals.set(ctx.from!.id, interval);
 });
