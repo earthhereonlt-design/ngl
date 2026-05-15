@@ -47,13 +47,12 @@ const setupWizard = new Scenes.WizardScene<MyContext>(
     if (!ctx.message || !('text' in ctx.message)) return;
     const text = (ctx.message as any).text.trim();
     
-    if (!text.includes('ngl.link/')) {
-      return ctx.reply('❌ Invalid link. Please provide a valid NGL link.');
+    if (!text.includes('ngl.link/') && !text.startsWith('https://')) {
+      return ctx.reply('❌ Invalid. Please paste a valid NGL link.');
     }
 
-    // Skip validation
     ctx.session.nglLink = text;
-    await ctx.reply('💠 *Payload Mode*\n\nSelect the type of payload to send:', 
+    await ctx.reply('💠 *Payload Mode*\n\nSelect mode:', 
       Markup.keyboard([['Custom Message', 'Spam Mode (Random)']]).oneTime().resize()
     );
     return ctx.wizard.next();
@@ -62,15 +61,15 @@ const setupWizard = new Scenes.WizardScene<MyContext>(
     if (!ctx.message || !('text' in ctx.message)) return;
     const text = (ctx.message as any).text;
 
-    if (text === 'Spam Mode (Random)' || text === 'Random Humor') {
+    if (text === 'Spam Mode (Random)' || text === 'Spam Mode' || text === 'Random Humor') {
       ctx.session.useRandom = true;
-      ctx.session.customMessage = 'RANDOM_HUMOR_MODE';
+      ctx.session.customMessage = 'RANDOM_MODE';
       return finishSetup(ctx);
     } else if (text === 'Custom Message') {
-      await ctx.reply('💠 Enter your custom message:\n\n_(This will be repeated)_', Markup.removeKeyboard());
+      await ctx.reply('💠 Enter your custom message:', Markup.removeKeyboard());
       return ctx.wizard.next();
     } else {
-      await ctx.reply('Please use the buttons provided.').catch(() => {});
+      await ctx.reply('Please use the buttons.').catch(() => {});
     }
   },
   async (ctx) => {
@@ -277,91 +276,82 @@ function getUptimeString(uptimeSeconds: number) {
 
 async function startTerminal(ctx: MyContext) {
   if (!ctx.session.nglLink || !ctx.session.customMessage) {
-    try { await ctx.reply('⚠️ Setup not complete. Send /start to begin.'); } catch(e) {}
+    try { await ctx.reply('⚠️ Please configure the bot first using /start'); } catch(e) {}
     return;
   }
 
   if (ctx.session.isRunning) {
-    try { await ctx.reply('▶️ Test is already running.'); } catch(e) {}
+    try { await ctx.reply('▶️ Terminal is already active.'); } catch(e) {}
     return;
   }
 
   ctx.session.isRunning = true;
   ctx.session.startTime = Date.now();
   ctx.session.count = 0;
-  ctx.session.lastLog = 'Initializing terminal core...';
+  ctx.session.lastLog = 'Establishing connection...';
 
-  // Clean UI: Delete previous messages
-  if (ctx.message && 'message_id' in ctx.message) {
-      try { await ctx.deleteMessage().catch(() => {}); } catch(e) {}
-  }
+  // Cleanup old dashboard if exists
   if (ctx.session.statusMessageId) {
-      try { await ctx.telegram.deleteMessage(ctx.chat!.id, ctx.session.statusMessageId).catch(() => {}); } catch(e) {}
+      ctx.telegram.deleteMessage(ctx.chat!.id, ctx.session.statusMessageId).catch(() => {});
   }
 
   try {
-    const initialStatus = await ctx.reply('💠 *N G L   T E R M I N A L*\n`Booting sequence...`', { parse_mode: 'Markdown' });
+    const initialStatus = await ctx.reply('💠 *T E R M I N A L   O N L I N E* 💠\n`Booting sequence...`', { parse_mode: 'Markdown' });
     ctx.session.statusMessageId = initialStatus.message_id;
     await updateDashboard(ctx);
   } catch (e: any) {
-    if (e.response && e.response.error_code === 429) {
-        console.error('Rate limited by Telegram:', e.response.description);
-    }
+    console.error('Initial dashboard error:', e.message);
   }
 
-  const interval = setInterval(async () => {
-    if (!ctx.session.isRunning) {
-      clearInterval(interval);
-      return;
-    }
+  const runCycle = async () => {
+    if (!ctx.session.isRunning) return;
 
-    // 5-minute reset logic
-    const elapsed = Date.now() - (ctx.session.startTime || Date.now());
-    if (elapsed >= 5 * 60 * 1000) {
-        ctx.session.startTime = Date.now();
-        ctx.session.count = 0;
-        ctx.session.lastLog = '🔄 Cycle reset (5m heartbeat)...';
-        await updateDashboard(ctx);
-        return; 
-    }
-    
-    // Initialize data
-    const username = ctx.session.nglLink?.split('/').filter(Boolean).pop() || 'Unknown';
-    const deviceId = uuidv4();
-
-    let currentMsg = ctx.session.customMessage;
-    if (ctx.session.useRandom) {
-      const randomIndex = Math.floor(Math.random() * humorMessages.length);
-      currentMsg = humorMessages[randomIndex];
+    try {
+      // 5-minute heartbeat reset
+      const elapsed = Date.now() - (ctx.session.startTime || Date.now());
+      if (elapsed >= 5 * 60 * 1000) {
+          ctx.session.startTime = Date.now();
+          ctx.session.count = 0;
+          ctx.session.lastLog = '🔄 5m heartbeat: stats reset.';
+          await updateDashboard(ctx);
+      }
       
-      const prefixes = ["Oye, ", "Bro, ", "Bhai, ", "", "", "Yo, "];
-      const suffixes = [" 😂", " 🔥", " ✨", " 😭", "", ""];
-      const randomPrefix = prefixes[Math.floor(Math.random() * prefixes.length)];
-      const randomSuffix = suffixes[Math.floor(Math.random() * suffixes.length)];
+      const username = ctx.session.nglLink?.split('/').filter(Boolean).pop() || 'Unknown';
+      const deviceId = uuidv4();
+
+      let currentMsg = ctx.session.customMessage;
+      if (ctx.session.useRandom) {
+        const randomIndex = Math.floor(Math.random() * humorMessages.length);
+        currentMsg = humorMessages[randomIndex];
+        const prefixes = ["Oye, ", "Bro, ", "Bhai, ", "", "Yo, "];
+        const suffixes = [" 😂", " 🔥", " ✨", " 😭", ""];
+        currentMsg = `${prefixes[Math.floor(Math.random() * prefixes.length)]}${currentMsg}${suffixes[Math.floor(Math.random() * suffixes.length)]}`;
+      }
+
+      const result = await sendNglMessage(ctx, username, currentMsg || '', deviceId);
       
-      currentMsg = `${randomPrefix}${currentMsg}${randomSuffix}`;
+      if (result.success) {
+          ctx.session.count = (ctx.session.count || 0) + 1;
+          ctx.session.lastLog = `✅ Sent: "${currentMsg?.substring(0, 25)}..."`;
+      } else {
+          ctx.session.lastLog = `❌ Error: ${result.error}`;
+      }
+      
+      await logMessage(username, currentMsg || '', result.success, result.error);
+      await updateDashboard(ctx);
+    } catch (err: any) {
+      console.error('Cycle Error:', err.message);
     }
 
-    // Optional: Just process without preparing state to save Telegram edit API calls
-    const result = await sendNglMessage(ctx, username, currentMsg || '', deviceId);
-    
-    if (result.success) {
-        ctx.session.count = (ctx.session.count || 0) + 1;
+    // Schedule next run
+    if (ctx.session.isRunning) {
+      const nextRun = setTimeout(runCycle, 10000);
+      activeIntervals.set(ctx.from!.id, nextRun);
     }
-    
-    // Log the result
-    await logMessage(username, currentMsg || '', result.success, result.error);
-    
-    // Result state
-    if (!result.success) {
-        ctx.session.lastLog = `❌ Failed: ${result.error}`;
-    } else {
-        ctx.session.lastLog = `✅ Sent: "${currentMsg?.substring(0, 30)}${currentMsg && currentMsg.length > 30 ? '...' : ''}"`;
-    }
-    await updateDashboard(ctx);
-  }, 10000); // 10s intervals for better stability and less block likelihood
+  };
 
-  activeIntervals.set(ctx.from!.id, interval);
+  // Immediate start
+  runCycle();
 }
 
 // --- ACTIONS ---
@@ -371,18 +361,17 @@ bot.action('action_run', async (ctx) => {
 });
 
 bot.action('action_stop', async (ctx) => {
-    const interval = activeIntervals.get(ctx.from!.id);
+    const userId = ctx.from!.id;
+    const interval = activeIntervals.get(userId);
     if (interval) {
-        clearInterval(interval);
-        activeIntervals.delete(ctx.from!.id);
-        const myCtx = ctx as unknown as MyContext;
-        myCtx.session.isRunning = false;
-        myCtx.session.lastLog = 'Session Terminated by User';
-        await updateDashboard(myCtx);
-        await ctx.answerCbQuery('Terminal Stopped! 🛑');
-    } else {
-        await ctx.answerCbQuery('Test is not running.');
+        clearTimeout(interval);
+        activeIntervals.delete(userId);
     }
+    const myCtx = ctx as unknown as MyContext;
+    myCtx.session.isRunning = false;
+    myCtx.session.lastLog = 'Halted by operator.';
+    await updateDashboard(myCtx);
+    await ctx.answerCbQuery('Halted 🛑');
 });
 
 bot.action('action_setup', async (ctx) => {
@@ -399,19 +388,20 @@ bot.command('run', async (ctx) => {
 
 
 bot.command('stop', async (ctx) => {
-  const interval = activeIntervals.get(ctx.from!.id);
+  const userId = ctx.from!.id;
+  const interval = activeIntervals.get(userId);
   
   // Try to delete user's command message for clean UI
   try { ctx.deleteMessage().catch(() => {}); } catch(e) {}
 
   if (interval) {
-    clearInterval(interval);
-    activeIntervals.delete(ctx.from!.id);
+    clearTimeout(interval);
+    activeIntervals.delete(userId);
     ctx.session.isRunning = false;
-    ctx.session.lastLog = 'Session Terminated by User';
+    ctx.session.lastLog = 'Halted by operator.';
     await updateDashboard(ctx);
   } else {
-    ctx.reply('Test is not running.').catch(() => {});
+    ctx.reply('Terminal is not active.').catch(() => {});
   }
 });
 
