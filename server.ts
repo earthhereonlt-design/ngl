@@ -54,7 +54,13 @@ const setupWizard = new Scenes.WizardScene<MyContext>(
     await ctx.reply(`🔍 Validating username: \`${username}\`...`, { parse_mode: 'Markdown' });
 
     try {
-      await axios.get(text, { timeout: 8000 });
+      await axios.get(text, { 
+        timeout: 8000,
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
+            'Referer': text,
+        }
+      });
       ctx.session.nglLink = text;
       await ctx.reply('✅ Link validated! Now, do you want to use a **Custom Message** or **Random Humor List**?', 
         Markup.keyboard([['Custom Message', 'Random Humor']]).oneTime().resize()
@@ -111,6 +117,41 @@ async function finishSetup(ctx: MyContext) {
 
 const stage = new Scenes.Stage<MyContext>([setupWizard]);
 
+async function sendNglMessage(ctx: MyContext, username: string, message: string, deviceId: string) {
+    try {
+        const params = new URLSearchParams();
+        params.append('username', username || '');
+        params.append('question', message || '');
+        params.append('deviceId', deviceId);
+        params.append('gameSlug', '');
+        params.append('referrer', '');
+
+        await axios.post('https://ngl.link/api/submit', params, {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
+                'Referer': `https://ngl.link/${username}`,
+                'Origin': 'https://ngl.link'
+            }
+        });
+        return { success: true };
+    } catch (err: any) {
+        let errorMsg = 'Unknown error';
+        if (err.response) {
+            switch (err.response.status) {
+                case 404: errorMsg = 'Profile not found (404)'; break;
+                case 429: errorMsg = 'Rate limited (429 - slow down)'; break;
+                case 500: case 502: case 503: errorMsg = 'NGL server error'; break;
+                default: errorMsg = `HTTP Error ${err.response.status}`;
+            }
+        } else if (err.code === 'ECONNABORTED') {
+            errorMsg = 'Request timed out';
+        }
+        return { success: false, error: errorMsg };
+    }
+}
+
 // --- BOT INITIALIZATION ---
 const bot = new Telegraf<MyContext>(token || 'DUMMY_TOKEN');
 
@@ -161,7 +202,7 @@ bot.command('run', async (ctx) => {
     
     ctx.session.count = (ctx.session.count || 0) + 1;
     
-    const username = ctx.session.nglLink?.split('/').filter(Boolean).pop();
+    const username = ctx.session.nglLink?.split('/').filter(Boolean).pop() || 'Unknown';
     const deviceId = uuidv4();
 
     let currentMsg = ctx.session.customMessage;
@@ -199,44 +240,10 @@ bot.command('run', async (ctx) => {
       ctx.telegram.editMessageText(ctx.chat.id, ctx.session.statusMessageId, undefined, statusText, { parse_mode: 'Markdown' }).catch(() => {});
     }
 
-    // Helper for sending
-    const sendNgl = async () => {
-        try {
-            const params = new URLSearchParams();
-            params.append('username', username || '');
-            params.append('question', currentMsg || '');
-            params.append('deviceId', deviceId);
-            params.append('gameSlug', '');
-            params.append('referrer', '');
-
-            const res = await axios.post(`https://ngl.link/${username}`, params, {
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
-                    'Referer': `https://ngl.link/${username}`,
-                    'Origin': 'https://ngl.link'
-                }
-            });
-            console.log(`✅ Message Sent to ${username}: ${res.status}`);
-        } catch (err: any) {
-            let errorMsg = 'Unknown error';
-            if (err.response) {
-                switch (err.response.status) {
-                    case 404: errorMsg = 'Profile not found (404)'; break;
-                    case 429: errorMsg = 'Rate limited (429 - slow down)'; break;
-                    case 500: case 502: case 503: errorMsg = 'NGL server error'; break;
-                    default: errorMsg = `HTTP Error ${err.response.status}`;
-                }
-            } else if (err.code === 'ECONNABORTED') {
-                errorMsg = 'Request timed out';
-            }
-            
-            console.error(`❌ Failed for ${username}: ${err.response?.status} - ${errorMsg}`);
-            ctx.session.lastLog = `❌ ${errorMsg}`;
-        }
-    };
-    sendNgl();
+    const result = await sendNglMessage(ctx, username, currentMsg || '', deviceId);
+    if (!result.success) {
+        ctx.session.lastLog = `❌ ${result.error}`;
+    }
   }, 3000);
 
   activeIntervals.set(ctx.from!.id, interval);
