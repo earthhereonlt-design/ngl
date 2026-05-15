@@ -50,33 +50,12 @@ const setupWizard = new Scenes.WizardScene<MyContext>(
       return ctx.reply('❌ Invalid link. Please provide a valid NGL link.');
     }
 
-    const username = text.split('/').filter(Boolean).pop();
-    await ctx.reply(`🔍 Validating username: \`${username}\`...`, { parse_mode: 'Markdown' });
-
-    try {
-      await axios.get(text, { 
-        timeout: 8000,
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
-            'Referer': text,
-        }
-      });
-      ctx.session.nglLink = text;
-      await ctx.reply('✅ Link validated! Now, do you want to use a **Custom Message** or **Random Humor List**?', 
-        Markup.keyboard([['Custom Message', 'Random Humor']]).oneTime().resize()
-      );
-      return ctx.wizard.next();
-    } catch (error: any) {
-      let msg = '❌ Could not validate NGL link. Please check the URL or try again later.';
-      if (error.response && error.response.status) {
-        msg = `❌ Link validation failed (Code: ${error.response.status}). The username might not exist, or the profile is blocked.`;
-      } else if (error.code === 'ECONNABORTED') {
-        msg = '❌ Connection timed out. Please try again.';
-      } else {
-        msg = '❌ Failed to connect to the NGL link. The site might be down or blocking requests.';
-      }
-      return ctx.reply(msg);
-    }
+    // Skip validation
+    ctx.session.nglLink = text;
+    await ctx.reply('✅ Link configured! Now, do you want to use a **Custom Message** or **Random Humor List**?', 
+      Markup.keyboard([['Custom Message', 'Random Humor']]).oneTime().resize()
+    );
+    return ctx.wizard.next();
   },
   async (ctx) => {
     if (!ctx.message || !('text' in ctx.message)) return;
