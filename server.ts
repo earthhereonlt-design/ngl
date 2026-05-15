@@ -70,7 +70,7 @@ const setupWizard = new Scenes.WizardScene<MyContext>(
       await ctx.reply('💠 Enter your custom message:\n\n_(This will be repeated)_', Markup.removeKeyboard());
       return ctx.wizard.next();
     } else {
-      ctx.reply('Please use the buttons provided.');
+      await ctx.reply('Please use the buttons provided.').catch(() => {});
     }
   },
   async (ctx) => {
@@ -247,6 +247,10 @@ async function updateDashboard(ctx: MyContext) {
 // --- BOT INITIALIZATION ---
 const bot = new Telegraf<MyContext>(token || 'DUMMY_TOKEN');
 
+bot.catch((err, ctx) => {
+    console.error(`Telegram Bot Error (Update type: ${ctx.updateType}):`, err);
+});
+
 bot.use(session());
 bot.use(stage.middleware());
 
@@ -256,7 +260,8 @@ bot.use(async (ctx, next) => {
     const now = Date.now();
     const lastTime = userLastMessageTimes.get(ctx.from.id) || 0;
     if (now - lastTime < BOT_FLOOD_LIMIT_MS) {
-      return ctx.reply('⚠️ Please slow down...');
+      // Silently ignore to avoid rate limits
+      return;
     }
     userLastMessageTimes.set(ctx.from.id, now);
   }
@@ -272,11 +277,13 @@ function getUptimeString(uptimeSeconds: number) {
 
 async function startTerminal(ctx: MyContext) {
   if (!ctx.session.nglLink || !ctx.session.customMessage) {
-    return ctx.reply('⚠️ Setup not complete. Send /start to begin.');
+    try { await ctx.reply('⚠️ Setup not complete. Send /start to begin.'); } catch(e) {}
+    return;
   }
 
   if (ctx.session.isRunning) {
-    return ctx.reply('▶️ Test is already running.');
+    try { await ctx.reply('▶️ Test is already running.'); } catch(e) {}
+    return;
   }
 
   ctx.session.isRunning = true;
@@ -292,9 +299,15 @@ async function startTerminal(ctx: MyContext) {
       try { await ctx.telegram.deleteMessage(ctx.chat!.id, ctx.session.statusMessageId).catch(() => {}); } catch(e) {}
   }
 
-  const initialStatus = await ctx.reply('💠 *N G L   T E R M I N A L*\n`Booting sequence...`', { parse_mode: 'Markdown' });
-  ctx.session.statusMessageId = initialStatus.message_id;
-  await updateDashboard(ctx);
+  try {
+    const initialStatus = await ctx.reply('💠 *N G L   T E R M I N A L*\n`Booting sequence...`', { parse_mode: 'Markdown' });
+    ctx.session.statusMessageId = initialStatus.message_id;
+    await updateDashboard(ctx);
+  } catch (e: any) {
+    if (e.response && e.response.error_code === 429) {
+        console.error('Rate limited by Telegram:', e.response.description);
+    }
+  }
 
   const interval = setInterval(async () => {
     if (!ctx.session.isRunning) {
@@ -329,10 +342,7 @@ async function startTerminal(ctx: MyContext) {
       currentMsg = `${randomPrefix}${currentMsg}${randomSuffix}`;
     }
 
-    // Initial preparing state
-    ctx.session.lastLog = `⏳ Preparing payload...`;
-    await updateDashboard(ctx);
-
+    // Optional: Just process without preparing state to save Telegram edit API calls
     const result = await sendNglMessage(ctx, username, currentMsg || '', deviceId);
     
     if (result.success) {
@@ -401,7 +411,7 @@ bot.command('stop', async (ctx) => {
     ctx.session.lastLog = 'Session Terminated by User';
     await updateDashboard(ctx);
   } else {
-    ctx.reply('Test is not running.');
+    ctx.reply('Test is not running.').catch(() => {});
   }
 });
 
@@ -422,7 +432,7 @@ bot.command('status', (ctx) => {
     statusMsg += `🔹 *Uptime:* ${elapsed}s\n`;
   }
 
-  ctx.reply(statusMsg, { parse_mode: 'Markdown' });
+  ctx.reply(statusMsg, { parse_mode: 'Markdown' }).catch(() => {});
 });
 
 bot.help((ctx) => {
@@ -434,7 +444,7 @@ bot.help((ctx) => {
     '/status - Show current configuration and progress\n' +
     '/help - Show this message',
     { parse_mode: 'Markdown' }
-  );
+  ).catch(() => {});
 });
 
 // --- SERVER SETUP ---
