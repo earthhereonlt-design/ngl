@@ -102,6 +102,18 @@ async function sendNglMessage(ctx: MyContext, username: string, message: string,
     // Add jitter
     await new Promise(resolve => setTimeout(resolve, Math.random() * 3000));
     try {
+        const currentUserAgent = USER_AGENTS[currentUserAgentIndex];
+        currentUserAgentIndex = (currentUserAgentIndex + 1) % USER_AGENTS.length;
+        
+        // 1. Warm up with GET request to get cookies/setup session
+        const headers: any = {
+            'User-Agent': currentUserAgent,
+            'Referer': `https://ngl.link/${username}`,
+        };
+        const response = await axios.get(`https://ngl.link/${username}`, { headers });
+        const cookies = response.headers['set-cookie']?.map(c => c.split(';')[0]).join('; ') || '';
+
+        // 2. Post
         const params = new URLSearchParams();
         params.append('username', username || '');
         params.append('question', message || '');
@@ -111,10 +123,10 @@ async function sendNglMessage(ctx: MyContext, username: string, message: string,
 
         await axios.post('https://ngl.link/api/submit', params, {
             headers: {
+                ...headers,
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
-                'Referer': `https://ngl.link/${username}`,
+                'Cookie': cookies,
                 'Origin': 'https://ngl.link'
             }
         });
@@ -134,6 +146,15 @@ async function sendNglMessage(ctx: MyContext, username: string, message: string,
         return { success: false, error: errorMsg };
     }
 }
+
+let currentUserAgentIndex = 0;
+const USER_AGENTS = [
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
+    'Mozilla/5.0 (iPad; CPU OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36'
+];
 
 // --- BOT INITIALIZATION ---
 const bot = new Telegraf<MyContext>(token || 'DUMMY_TOKEN');
@@ -177,10 +198,42 @@ bot.command('run', async (ctx) => {
   const initialStatus = await ctx.reply('🛰 *NGL EXPLORER TERMINAL v1.5.0*\nInitializing dashboard...', { parse_mode: 'Markdown' });
   ctx.session.statusMessageId = initialStatus.message_id;
 
+  // Update helper
+  const updateDashboard = async () => {
+      const uptimeSeconds = Math.floor((Date.now() - (ctx.session.startTime || Date.now())) / 1000);
+      const h = Math.floor(uptimeSeconds / 3600).toString().padStart(2, '0');
+      const m = Math.floor((uptimeSeconds % 3600) / 60).toString().padStart(2, '0');
+      const s = (uptimeSeconds % 60).toString().padStart(2, '0');
+      
+      const statusText = 
+        `*🛰 NGL EXPLORER TERMINAL v1.6.0*\n` +
+        `─────────────────────────────\n` +
+        `👤 *Target:* \`${ctx.session.nglLink?.split('/').filter(Boolean).pop() || 'Unknown'}\`\n` +
+        `⏱ *Uptime:* \`${h}:${m}:${s}\`\n` +
+        `📊 *Sent:* \`${ctx.session.count}\` messages 📨\n` +
+        `🛡 *Status:* \`RUNNING 🟢\`\n` +
+        `─────────────────────────────\n` +
+        `📝 *Log:* \`${ctx.session.lastLog}\``;
+
+      if (ctx.session.statusMessageId) {
+          await ctx.telegram.editMessageText(ctx.chat.id, ctx.session.statusMessageId, undefined, statusText, { parse_mode: 'Markdown' }).catch(() => {});
+      }
+  };
+
   const interval = setInterval(async () => {
     if (!ctx.session.isRunning) {
       clearInterval(interval);
       return;
+    }
+
+    // 5-minute reset logic
+    const elapsed = Date.now() - (ctx.session.startTime || Date.now());
+    if (elapsed >= 5 * 60 * 1000) {
+        ctx.session.startTime = Date.now();
+        ctx.session.count = 0;
+        ctx.session.lastLog = '🔄 Cycle reset...';
+        await updateDashboard();
+        return; 
     }
     
     // Initialize data
@@ -201,26 +254,8 @@ bot.command('run', async (ctx) => {
     }
 
     // Update helper
-    const updateDashboard = async () => {
-        const uptimeSeconds = Math.floor((Date.now() - (ctx.session.startTime || Date.now())) / 1000);
-        const h = Math.floor(uptimeSeconds / 3600).toString().padStart(2, '0');
-        const m = Math.floor((uptimeSeconds % 3600) / 60).toString().padStart(2, '0');
-        const s = (uptimeSeconds % 60).toString().padStart(2, '0');
-        
-        const statusText = 
-          `*🛰 NGL EXPLORER TERMINAL v1.6.0*\n` +
-          `─────────────────────────────\n` +
-          `👤 *Target:* \`${username}\`\n` +
-          `⏱ *Uptime:* \`${h}:${m}:${s}\`\n` +
-          `📊 *Sent:* \`${ctx.session.count}\` messages 📨\n` +
-          `🛡 *Status:* \`RUNNING 🟢\`\n` +
-          `─────────────────────────────\n` +
-          `📝 *Log:* \`${ctx.session.lastLog}\``;
+    // Duplicate removed here
 
-        if (ctx.session.statusMessageId) {
-            await ctx.telegram.editMessageText(ctx.chat.id, ctx.session.statusMessageId, undefined, statusText, { parse_mode: 'Markdown' }).catch(() => {});
-        }
-    };
 
     ctx.session.count = (ctx.session.count || 0) + 1;
     
